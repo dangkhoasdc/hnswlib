@@ -95,6 +95,9 @@ public:
     else if(space_name=="cosine") {
       l2space = new hnswlib::InnerProductSpace(dim);
       normalize=true;
+    }
+    else if(space_name.substr(space_name.length() - 2) == "h5") {
+      l2space = new hnswlib::PQSpace(space_name, dim);
     } else {
       throw new std::runtime_error("Space name must be one of l2, ip, or cosine.");
     }

@@ -18,14 +18,17 @@ namespace hnswlib {
     public:
         static const tableint max_update_element_locks = 65536;
         HierarchicalNSW(SpaceInterface<dist_t> *s) {
+          l2space = s;
         }
 
         HierarchicalNSW(SpaceInterface<dist_t> *s, const std::string &location, bool nmslib = false, size_t max_elements=0) {
+            l2space = s;
             loadIndex(location, s, max_elements);
         }
 
         HierarchicalNSW(SpaceInterface<dist_t> *s, size_t max_elements, size_t M = 16, size_t ef_construction = 200, size_t random_seed = 100) :
                 link_list_locks_(max_elements), link_list_update_locks_(max_update_element_locks), element_levels_(max_elements) {
+            l2space = s;
             max_elements_ = max_elements;
 
             num_deleted_ = 0;
@@ -120,6 +123,7 @@ namespace hnswlib {
         size_t data_size_;
 
         size_t label_offset_;
+        SpaceInterface<dist_t>* l2space;
         DISTFUNC<dist_t> fstdistfunc_;
         void *dist_func_param_;
         std::unordered_map<labeltype, tableint> label_lookup_;
@@ -988,6 +992,8 @@ namespace hnswlib {
         tableint addPoint(const void *data_point, labeltype label, int level) {
 
             tableint cur_c = 0;
+            dist_func_param_ = l2space->preprocess(
+              data_point, l2space->get_dist_func_param());
             {
                 // Checking if the element with the same label already exists
                 // if so, updating it *instead* of creating a new element.
@@ -1112,10 +1118,11 @@ namespace hnswlib {
         };
 
         std::priority_queue<std::pair<dist_t, labeltype >>
-        searchKnn(const void *query_data, size_t k) const {
+        searchKnn(const void *query_data, size_t k) {
             std::priority_queue<std::pair<dist_t, labeltype >> result;
             if (cur_element_count == 0) return result;
-
+            dist_func_param_ = l2space->preprocess(
+              query_data, l2space->get_dist_func_param());
             tableint currObj = enterpoint_node_;
             dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
 

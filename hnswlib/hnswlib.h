@@ -148,6 +148,11 @@ namespace hnswlib {
 
         virtual void *get_dist_func_param() = 0;
 
+        virtual void *preprocess(const void*, const void*) {
+          // do nothing and return the original params for dist function
+          return get_dist_func_param();
+        }
+
         virtual ~SpaceInterface() {}
     };
 
@@ -155,11 +160,11 @@ namespace hnswlib {
     class AlgorithmInterface {
     public:
         virtual void addPoint(const void *datapoint, labeltype label)=0;
-        virtual std::priority_queue<std::pair<dist_t, labeltype >> searchKnn(const void *, size_t) const = 0;
+        virtual std::priority_queue<std::pair<dist_t, labeltype >> searchKnn(const void *, size_t) = 0;
 
         // Return k nearest neighbor in the order of closer fist
         virtual std::vector<std::pair<dist_t, labeltype>>
-            searchKnnCloserFirst(const void* query_data, size_t k) const;
+            searchKnnCloserFirst(const void* query_data, size_t k) ;
 
         virtual void saveIndex(const std::string &location)=0;
         virtual ~AlgorithmInterface(){
@@ -168,7 +173,7 @@ namespace hnswlib {
 
     template<typename dist_t>
     std::vector<std::pair<dist_t, labeltype>>
-    AlgorithmInterface<dist_t>::searchKnnCloserFirst(const void* query_data, size_t k) const {
+    AlgorithmInterface<dist_t>::searchKnnCloserFirst(const void* query_data, size_t k) {
         std::vector<std::pair<dist_t, labeltype>> result;
 
         // here searchKnn returns the result in the order of further first
@@ -188,5 +193,6 @@ namespace hnswlib {
 
 #include "space_l2.h"
 #include "space_ip.h"
+#include "space_pq.h"
 #include "bruteforce.h"
 #include "hnswalg.h"
