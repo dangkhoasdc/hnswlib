@@ -1,7 +1,10 @@
 #pragma once
+#include <iostream>
 #include <vector>
 #include <string>
 #include <cmath>
+#include <exception>
+#include <cstdint>
 #include "hnswlib.h"
 
 #include <highfive/H5File.hpp>
@@ -34,7 +37,7 @@ namespace hnswlib {
     }
   };
 
-  static float pq_distance(const void* a, const void* b, const void* c) {
+  static int pq_distance(const void* a, const void* b, const void* c) {
     PQInfo* pInfo = (PQInfo*) c;
     const float* norm_codebook = pInfo->discodebook.data();
     const float* prod_codebook = pInfo->discodebook.data() + 256;
@@ -46,7 +49,6 @@ namespace hnswlib {
     float norm_a = 0.0f;
     float norm_b = 0.0f;
     float prod = 0.0f;
-
     for (int i = 0; i < dim; i += 4)
     {
         int idx0a = a_byte[i];
@@ -85,19 +87,23 @@ namespace hnswlib {
         prod += prod0 + prod1 + prod2 + prod3;
     }
 
-    if (norm_a <= 1e-6 || norm_b <= 1e-6)
-    {
-        if (norm_a <= 1e-6 && norm_b <= 1e-6)
-        {
-            return 0.0f;
-        }
-        else
-        {
-            return 1.0f;
-        }
-    }
+    // if (norm_a <= 1e-6 || norm_b <= 1e-6)
+    // {
+    //     if (norm_a <= 1e-6 && norm_b <= 1e-6)
+    //     {
+    //         return 0;
+    //     }
+    //     else
+    //     {
+    //         return 10000;
+    //     }
+    // }
 
-    return 2.0f - 2.0f * prod / std::sqrt(norm_a) / std::sqrt(norm_b);
+    float dist = 2.0f - 2.0f * prod / std::sqrt(norm_a) / std::sqrt(norm_b);
+    // std::cerr << "dist: " << dist << std::endl;
+    int final_dist =  int(dist * 10000);
+    // std::cerr << "dist: " << final_dist << std::endl;
+    return final_dist;
   }
 
   PQInfo load_pq_codebook(const std::string& codebook_path) {
@@ -122,8 +128,8 @@ namespace hnswlib {
     for (const auto& dim: info.discodebook_dims)
       n_discodebook_elems *= dim;
 
-    info.codebook.resize(n_discodebook_elems);
-    codebook.read<float>(info.discodebook.data());
+    info.discodebook.resize(n_discodebook_elems);
+    discodebook.read<float>(info.discodebook.data());
 
     return info;
   }
@@ -134,8 +140,8 @@ namespace hnswlib {
   // }
 
 
-  class PQSpace: public SpaceInterface<float> {
-    DISTFUNC<float> fstdistfunc_;
+  class PQSpace: public SpaceInterface<int> {
+    DISTFUNC<int> fstdistfunc_;
     size_t data_size_;
     size_t dim_;
     PQInfo orig_pq_info;
@@ -143,15 +149,16 @@ namespace hnswlib {
   public:
     PQSpace(const std::string& codebook_path, size_t dim) {
       dim_ = dim;
-      data_size_ = dim * sizeof(unsigned char);
+      data_size_ = dim * sizeof(uint8_t);
       orig_pq_info = load_pq_codebook(codebook_path);
       orig_pq_info.dim = dim;
+      fstdistfunc_ = pq_distance;
     }
     size_t get_data_size() override {
       return data_size_;
     }
 
-    DISTFUNC<float> get_dist_func() override {
+    DISTFUNC<int> get_dist_func() override {
       return fstdistfunc_;
     }
 

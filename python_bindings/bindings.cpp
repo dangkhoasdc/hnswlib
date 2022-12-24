@@ -3,6 +3,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include "hnswlib.h"
+#include <cstdint>
 #include <thread>
 #include <atomic>
 #include <stdlib.h>
@@ -86,21 +87,26 @@ public:
   Index(const std::string &space_name, const int dim) :
   space_name(space_name), dim(dim) {
     normalize=false;
-    if(space_name=="l2") {
-      l2space = new hnswlib::L2Space(dim);
-    }
-    else if(space_name=="ip") {
-      l2space = new hnswlib::InnerProductSpace(dim);
-    }
-    else if(space_name=="cosine") {
-      l2space = new hnswlib::InnerProductSpace(dim);
-      normalize=true;
-    }
-    else if(space_name.substr(space_name.length() - 2) == "h5") {
+
+    // if(space_name=="l2") {
+    //   l2space = new hnswlib::L2Space(dim);
+    // }
+    // else if(space_name=="ip") {
+    //   l2space = new hnswlib::InnerProductSpace(dim);
+    // }
+    // else if(space_name=="cosine") {
+    //   l2space = new hnswlib::InnerProductSpace(dim);
+    //   normalize=true;
+    // } else {
+    //   throw new std::runtime_error("Space name must be one of l2, ip, or cosine.");
+    // }
+
+    if(space_name.substr(space_name.length() - 2) == "h5") {
       l2space = new hnswlib::PQSpace(space_name, dim);
     } else {
       throw new std::runtime_error("Space name must be one of l2, ip, or cosine.");
     }
+
     appr_alg = NULL;
     ep_added = true;
     index_inited = false;
@@ -122,7 +128,7 @@ public:
   int num_threads_default;
   hnswlib::labeltype cur_l;
   hnswlib::HierarchicalNSW<dist_t> *appr_alg;
-  hnswlib::SpaceInterface<float> *l2space;
+  hnswlib::SpaceInterface<dist_t> *l2space;
 
   ~Index() {
       delete l2space;
@@ -176,7 +182,7 @@ public:
     }
 
     void addItems(py::object input, py::object ids_ = py::none(), int num_threads = -1) {
-        py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
+        py::array_t < data_t, py::array::c_style | py::array::forcecast > items(input);
         auto buffer = items.request();
         if (num_threads <= 0)
             num_threads = num_threads_default;
@@ -226,11 +232,11 @@ public:
           int start = 0;
           if (!ep_added) {
             size_t id = ids.size() ? ids.at(0) : (cur_l);
-            float *vector_data = (float *) items.data(0);
-            std::vector<float> norm_array(dim);
+            data_t *vector_data = (data_t *) items.data(0);
             if(normalize){
-              normalize_vector(vector_data, norm_array.data());
-              vector_data = norm_array.data();
+              std::vector<float> norm_array(dim);
+              normalize_vector((float*)vector_data, norm_array.data());
+              vector_data = (data_t*) norm_array.data();
             }
             appr_alg->addPoint((void *) vector_data, (size_t) id);
             start = 1;
@@ -408,7 +414,7 @@ public:
 
     py::dict getIndexParams() const { /* WARNING: Index::getAnnData is not thread-safe with Index::addItems */
         auto params = py::dict(
-                            "ser_version"_a=py::int_(Index<float>::ser_version), //serialization version
+                            "ser_version"_a=py::int_(Index<dist_t, data_t>::ser_version), //serialization version
                             "space"_a=space_name,
                             "dim"_a=dim,
                             "index_inited"_a=index_inited,
@@ -427,15 +433,15 @@ public:
     }
 
 
-    static Index<float> * createFromParams(const py::dict d) {
+    static Index<dist_t, data_t> * createFromParams(const py::dict d) {
       // check serialization version
-      assert_true(((int)py::int_(Index<float>::ser_version)) >= d["ser_version"].cast<int>(), "Invalid serialization version!");
+      assert_true(((int)py::int_(Index<dist_t, data_t>::ser_version)) >= d["ser_version"].cast<int>(), "Invalid serialization version!");
 
       auto space_name_=d["space"].cast<std::string>();
       auto dim_=d["dim"].cast<int>();
       auto index_inited_=d["index_inited"].cast<bool>();
 
-      Index<float> *new_index = new Index<float>(space_name_, dim_);
+      Index<dist_t, data_t> *new_index = new Index<dist_t, data_t>(space_name_, dim_);
 
       /*  TODO: deserialize state of random generators into new_index->level_generator_ and new_index->update_probability_generator_  */
       /*        for full reproducibility / state of generators is serialized inside Index::getIndexParams                      */
@@ -457,7 +463,7 @@ public:
       return new_index;
     }
 
-    static Index<float> * createFromIndex(const Index<float> & index) {
+    static Index<dist_t, data_t> * createFromIndex(const Index<dist_t, data_t> & index) {
         return createFromParams(index.getIndexParams());
     }
 
@@ -542,7 +548,7 @@ public:
 }
 
     py::object knnQuery_return_numpy(py::object input, size_t k = 1, int num_threads = -1) {
-        py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
+        py::array_t < data_t, py::array::c_style | py::array::forcecast > items(input);
         auto buffer = items.request();
         hnswlib::labeltype *data_numpy_l;
         dist_t *data_numpy_d;
@@ -572,6 +578,11 @@ public:
 
             data_numpy_l = new hnswlib::labeltype[rows * k];
             data_numpy_d = new dist_t[rows * k];
+            // std::cerr << (int)items.data(0)[0] << std::endl;
+            // std::cerr << (int)items.data(0)[1] << std::endl;
+            // std::cerr << (int)items.data(0)[2] << std::endl;
+            // std::cerr << "size of: " << sizeof(items.data(0)[2]) << std::endl;
+            // throw std::runtime_error("check here");
 
             if(normalize==false) {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
@@ -654,6 +665,7 @@ public:
         return appr_alg->cur_element_count;
     }
 };
+
 
 template<typename dist_t, typename data_t=float>
 class BFIndex {
@@ -841,65 +853,65 @@ public:
 PYBIND11_PLUGIN(hnswlib) {
         py::module m("hnswlib");
 
-        py::class_<Index<float>>(m, "Index")
-        .def(py::init(&Index<float>::createFromParams), py::arg("params"))
-           /* WARNING: Index::createFromIndex is not thread-safe with Index::addItems */
-        .def(py::init(&Index<float>::createFromIndex), py::arg("index"))
-        .def(py::init<const std::string &, const int>(), py::arg("space"), py::arg("dim"))
-        .def("init_index", &Index<float>::init_new_index, py::arg("max_elements"), py::arg("M")=16, py::arg("ef_construction")=200, py::arg("random_seed")=100)
-        .def("knn_query", &Index<float>::knnQuery_return_numpy, py::arg("data"), py::arg("k")=1, py::arg("num_threads")=-1)
-        .def("add_items", &Index<float>::addItems, py::arg("data"), py::arg("ids") = py::none(), py::arg("num_threads")=-1)
-        .def("get_items", &Index<float, float>::getDataReturnList, py::arg("ids") = py::none())
-        .def("get_ids_list", &Index<float>::getIdsList)
-        .def("set_ef", &Index<float>::set_ef, py::arg("ef"))
-        .def("set_num_threads", &Index<float>::set_num_threads, py::arg("num_threads"))
-        .def("save_index", &Index<float>::saveIndex, py::arg("path_to_index"))
-        .def("load_index", &Index<float>::loadIndex, py::arg("path_to_index"), py::arg("max_elements")=0)
-        .def("mark_deleted", &Index<float>::markDeleted, py::arg("label"))
-        .def("unmark_deleted", &Index<float>::unmarkDeleted, py::arg("label"))
-        .def("resize_index", &Index<float>::resizeIndex, py::arg("new_size"))
-        .def("get_max_elements", &Index<float>::getMaxElements)
-        .def("get_current_count", &Index<float>::getCurrentCount)
-        .def_readonly("space", &Index<float>::space_name)
-        .def_readonly("dim", &Index<float>::dim)
-        .def_readwrite("num_threads", &Index<float>::num_threads_default)
-        .def_property("ef",
-          [](const Index<float> & index) {
-            return index.index_inited ? index.appr_alg->ef_ : index.default_ef;
-          },
-          [](Index<float> & index, const size_t ef_) {
-            index.default_ef=ef_;
-            if (index.appr_alg)
-              index.appr_alg->ef_ = ef_;
-        })
-        .def_property_readonly("max_elements", [](const Index<float> & index) {
-            return index.index_inited ? index.appr_alg->max_elements_ : 0;
-        })
-        .def_property_readonly("element_count", [](const Index<float> & index) {
-            return index.index_inited ? index.appr_alg->cur_element_count : 0;
-        })
-        .def_property_readonly("ef_construction", [](const Index<float> & index) {
-          return index.index_inited ? index.appr_alg->ef_construction_ : 0;
-        })
-        .def_property_readonly("M",  [](const Index<float> & index) {
-          return index.index_inited ? index.appr_alg->M_ : 0;
-        })
-
-        .def(py::pickle(
-            [](const Index<float> &ind) { // __getstate__
-                return py::make_tuple(ind.getIndexParams()); /* Return dict (wrapped in a tuple) that fully encodes state of the Index object */
-            },
-            [](py::tuple t) { // __setstate__
-                if (t.size() != 1)
-                    throw std::runtime_error("Invalid state!");
-
-                return Index<float>::createFromParams(t[0].cast<py::dict>());
-            }
-        ))
-
-        .def("__repr__", [](const Index<float> &a) {
-            return "<hnswlib.Index(space='" + a.space_name + "', dim="+std::to_string(a.dim)+")>";
-        });
+        // py::class_<Index<float>>(m, "Index")
+        // .def(py::init(&Index<float>::createFromParams), py::arg("params"))
+        //    /* WARNING: Index::createFromIndex is not thread-safe with Index::addItems */
+        // .def(py::init(&Index<float>::createFromIndex), py::arg("index"))
+        // .def(py::init<const std::string &, const int>(), py::arg("space"), py::arg("dim"))
+        // .def("init_index", &Index<float>::init_new_index, py::arg("max_elements"), py::arg("M")=16, py::arg("ef_construction")=200, py::arg("random_seed")=100)
+        // .def("knn_query", &Index<float>::knnQuery_return_numpy, py::arg("data"), py::arg("k")=1, py::arg("num_threads")=-1)
+        // .def("add_items", &Index<float>::addItems, py::arg("data"), py::arg("ids") = py::none(), py::arg("num_threads")=-1)
+        // .def("get_items", &Index<float, float>::getDataReturnList, py::arg("ids") = py::none())
+        // .def("get_ids_list", &Index<float>::getIdsList)
+        // .def("set_ef", &Index<float>::set_ef, py::arg("ef"))
+        // .def("set_num_threads", &Index<float>::set_num_threads, py::arg("num_threads"))
+        // .def("save_index", &Index<float>::saveIndex, py::arg("path_to_index"))
+        // .def("load_index", &Index<float>::loadIndex, py::arg("path_to_index"), py::arg("max_elements")=0)
+        // .def("mark_deleted", &Index<float>::markDeleted, py::arg("label"))
+        // .def("unmark_deleted", &Index<float>::unmarkDeleted, py::arg("label"))
+        // .def("resize_index", &Index<float>::resizeIndex, py::arg("new_size"))
+        // .def("get_max_elements", &Index<float>::getMaxElements)
+        // .def("get_current_count", &Index<float>::getCurrentCount)
+        // .def_readonly("space", &Index<float>::space_name)
+        // .def_readonly("dim", &Index<float>::dim)
+        // .def_readwrite("num_threads", &Index<float>::num_threads_default)
+        // .def_property("ef",
+        //   [](const Index<float> & index) {
+        //     return index.index_inited ? index.appr_alg->ef_ : index.default_ef;
+        //   },
+        //   [](Index<float> & index, const size_t ef_) {
+        //     index.default_ef=ef_;
+        //     if (index.appr_alg)
+        //       index.appr_alg->ef_ = ef_;
+        // })
+        // .def_property_readonly("max_elements", [](const Index<float> & index) {
+        //     return index.index_inited ? index.appr_alg->max_elements_ : 0;
+        // })
+        // .def_property_readonly("element_count", [](const Index<float> & index) {
+        //     return index.index_inited ? index.appr_alg->cur_element_count : 0;
+        // })
+        // .def_property_readonly("ef_construction", [](const Index<float> & index) {
+        //   return index.index_inited ? index.appr_alg->ef_construction_ : 0;
+        // })
+        // .def_property_readonly("M",  [](const Index<float> & index) {
+        //   return index.index_inited ? index.appr_alg->M_ : 0;
+        // })
+        //
+        // .def(py::pickle(
+        //     [](const Index<float> &ind) { // __getstate__
+        //         return py::make_tuple(ind.getIndexParams()); /* Return dict (wrapped in a tuple) that fully encodes state of the Index object */
+        //     },
+        //     [](py::tuple t) { // __setstate__
+        //         if (t.size() != 1)
+        //             throw std::runtime_error("Invalid state!");
+        //
+        //         return Index<float>::createFromParams(t[0].cast<py::dict>());
+        //     }
+        // ))
+        //
+        // .def("__repr__", [](const Index<float> &a) {
+        //     return "<hnswlib.Index(space='" + a.space_name + "', dim="+std::to_string(a.dim)+")>";
+        // });
 
         py::class_<BFIndex<float>>(m, "BFIndex")
         .def(py::init<const std::string &, const int>(), py::arg("space"), py::arg("dim"))
@@ -912,5 +924,68 @@ PYBIND11_PLUGIN(hnswlib) {
         .def("__repr__", [](const BFIndex<float> &a) {
             return "<hnswlib.BFIndex(space='" + a.space_name + "', dim="+std::to_string(a.dim)+")>";
         });
+
+
+        // PQDistance
+        py::class_<Index<int, uint8_t>>(m, "Index") .def(py::init(&Index<int, uint8_t>::createFromParams), py::arg("params"))
+           /* WARNING: Index::createFromIndex is not thread-safe with Index::addItems */
+        .def(py::init(&Index<int, uint8_t>::createFromIndex), py::arg("index"))
+        .def(py::init<const std::string &, const int>(), py::arg("space"), py::arg("dim"))
+        .def("init_index", &Index<int, uint8_t>::init_new_index, py::arg("max_elements"), py::arg("M")=16, py::arg("ef_construction")=200, py::arg("random_seed")=100)
+        .def("knn_query", &Index<int, uint8_t>::knnQuery_return_numpy, py::arg("data"), py::arg("k")=1, py::arg("num_threads")=-1)
+        .def("add_items", &Index<int, uint8_t>::addItems, py::arg("data"), py::arg("ids") = py::none(), py::arg("num_threads")=-1)
+        .def("get_items", &Index<int, uint8_t>::getDataReturnList, py::arg("ids") = py::none())
+        .def("get_ids_list", &Index<int, uint8_t>::getIdsList)
+        .def("set_ef", &Index<int, uint8_t>::set_ef, py::arg("ef"))
+        .def("set_num_threads", &Index<int, uint8_t>::set_num_threads, py::arg("num_threads"))
+        .def("save_index", &Index<int, uint8_t>::saveIndex, py::arg("path_to_index"))
+        .def("load_index", &Index<int, uint8_t>::loadIndex, py::arg("path_to_index"), py::arg("max_elements")=0)
+        .def("mark_deleted", &Index<int, uint8_t>::markDeleted, py::arg("label"))
+        .def("unmark_deleted", &Index<int, uint8_t>::unmarkDeleted, py::arg("label"))
+        .def("resize_index", &Index<int, uint8_t>::resizeIndex, py::arg("new_size"))
+        .def("get_max_elements", &Index<int, uint8_t>::getMaxElements)
+        .def("get_current_count", &Index<int, uint8_t>::getCurrentCount)
+        .def_readonly("space", &Index<int, uint8_t>::space_name)
+        .def_readonly("dim", &Index<int, uint8_t>::dim)
+        .def_readwrite("num_threads", &Index<int, uint8_t>::num_threads_default)
+        .def_property("ef",
+          [](const Index<int, uint8_t> & index) {
+            return index.index_inited ? index.appr_alg->ef_ : index.default_ef;
+          },
+          [](Index<int, uint8_t> & index, const size_t ef_) {
+            index.default_ef=ef_;
+            if (index.appr_alg)
+              index.appr_alg->ef_ = ef_;
+        })
+        .def_property_readonly("max_elements", [](const Index<int, uint8_t> & index) {
+            return index.index_inited ? index.appr_alg->max_elements_ : 0;
+        })
+        .def_property_readonly("element_count", [](const Index<int, uint8_t> & index) {
+            return index.index_inited ? index.appr_alg->cur_element_count : 0;
+        })
+        .def_property_readonly("ef_construction", [](const Index<int, uint8_t> & index) {
+          return index.index_inited ? index.appr_alg->ef_construction_ : 0;
+        })
+        .def_property_readonly("M",  [](const Index<int, uint8_t> & index) {
+          return index.index_inited ? index.appr_alg->M_ : 0;
+        })
+
+        .def(py::pickle(
+            [](const Index<int, uint8_t> &ind) { // __getstate__
+                return py::make_tuple(ind.getIndexParams()); /* Return dict (wrapped in a tuple) that fully encodes state of the Index object */
+            },
+            [](py::tuple t) { // __setstate__
+                if (t.size() != 1)
+                    throw std::runtime_error("Invalid state!");
+
+                return Index<int, uint8_t>::createFromParams(t[0].cast<py::dict>());
+            }
+        ))
+
+        .def("__repr__", [](const Index<int, uint8_t> &a) {
+            return "<hnswlib.IndexUint8Distance(space='" + a.space_name + "', dim="+std::to_string(a.dim)+")>";
+        });
+
+
         return m.ptr();
 }
