@@ -8,7 +8,7 @@ import setuptools
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
-__version__ = '0.6.1'
+__version__ = '0.6.2'
 
 
 include_dirs = [
@@ -20,14 +20,20 @@ include_dirs = [
 bindings_dir = 'python_bindings'
 if bindings_dir in os.path.basename(os.getcwd()):
     source_files = ['./bindings.cpp']
-    include_dirs.extend(['../hnswlib/'])
+    include_dirs.extend(['../hnswlib/', '../3rdparty/HighFive/include/'])
+    # include_dirs.extend(['../hnswlib/'])
 else:
     source_files = ['./python_bindings/bindings.cpp']
-    include_dirs.extend(['./hnswlib/'])
+    include_dirs.extend(['./hnswlib/', './3rdparty/HighFive/include/'])
+    # include_dirs.extend(['./hnswlib/'])
+
+include_dirs.extend(['/mnt/raid_03/khoa/software/miniconda3/envs/fc/include/'])
 
 
-libraries = []
+libraries = ['hdf5']
+# libraries = []
 extra_objects = []
+libraries_dirs = ['/mnt/raid_03/khoa/software/miniconda3/envs/fc/lib/']
 
 
 ext_modules = [
@@ -35,9 +41,11 @@ ext_modules = [
         'hnswlib',
         source_files,
         include_dirs=include_dirs,
+        libraries_dirs=libraries_dirs,
         libraries=libraries,
         language='c++',
         extra_objects=extra_objects,
+        define_macros=[('H5_BUILT_AS_DYNAMIC_LIB', None)]
     ),
 ]
 
@@ -121,7 +129,7 @@ setup(
     url='https://github.com/yurymalkov/hnsw',
     long_description="""hnsw""",
     ext_modules=ext_modules,
-    install_requires=['numpy'],
+    install_requires=['numpy==1.21'],
     cmdclass={'build_ext': BuildExt},
     zip_safe=False,
 )

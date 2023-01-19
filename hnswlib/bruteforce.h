@@ -88,7 +88,7 @@ namespace hnswlib {
 
 
         std::priority_queue<std::pair<dist_t, labeltype >>
-        searchKnn(const void *query_data, size_t k) const {
+        searchKnn(const void *query_data, size_t k) {
             std::priority_queue<std::pair<dist_t, labeltype >> topResults;
             if (cur_element_count == 0) return topResults;
             for (int i = 0; i < k; i++) {
